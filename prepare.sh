@@ -4,13 +4,15 @@
 #  Filename: prepare.sh                   (Created: 2020-08-23)            #
 #                                         (Updated: YYYY-MM-DD)            #
 #  Info:                                                                   #
-#    Prepares Ubuntu 20 machine for CTFd. Running with gunicorn under the  #
+#    Prepares machine for CTFd. Running with gunicorn under the            #
 #       ctfd user and using nginx as a proxy for HTTPs                     #
 #  Author:                                                                 #
 #    Ryan Hays                                                             #
+#                                                                          #
+#  Tested on:                                                              #
+#    Ubuntu 20.10                                                          #
+#    Ubuntu 21.04                                                          #
 #**************************************************************************#
-# TODO:
-#
 
 
 # Setup a log file to catch all output
@@ -32,7 +34,6 @@ STAGE=0
 TOTAL=$(grep '(${STAGE}/${TOTAL})' $0 | wc -l);(( TOTAL-- ))
 STARTTIME=$(date +%s)
 HOSTNAME=$(cat /etc/hostname)
-
 
 
 ##### PRE CHECKS #####
@@ -119,23 +120,24 @@ apt-get -y -qq autoremove \
 
 ##### Installing Packages
 (( STAGE++ )); echo -e "\n\n ${GREEN}[+]${RESET} (${STAGE}/${TOTAL}) Installing ${GREEN}Packages${RESET}"
-apt-get -y -qq install build-essential libffi-dev python3-pip gunicorn nginx git vim certbot python3-certbot-nginx \
-|| echo -e ' '${RED}'[!] Issue with apt install'${RESET} 1>&2
+apt-get -y -qq -o Dpkg::Use-Pty=0 install build-essential libffi-dev python3-pip gunicorn nginx git vim certbot python3-certbot-nginx unzip \
+|| echo -e ' '${RED}'[!] Issue with apt install'${RESET} &>/dev/null
 
 ##### Adding CTFd user
 (( STAGE++ )); echo -e "\n\n ${GREEN}[+]${RESET} (${STAGE}/${TOTAL}) Adding ${GREEN}CTFd user${RESET}"
 useradd ctfd
 mkdir /var/log/CTFd
 mkdir -p /home/ctfd
+mkdir -p /home/ctfd/CTFd/ctfd_uploads
 
 ##### Installing CTFd
 (( STAGE++ )); echo -e "\n\n ${GREEN}[+]${RESET} (${STAGE}/${TOTAL}) Installing ${GREEN}CTFd${RESET}"
 git clone -q -b master https://github.com/MrJester/CTFd.git /home/ctfd/CTFd \
-|| echo -e ' '${RED}'[!] Issue when git cloning'${RESET} 1>&2
+|| echo -e ' '${RED}'[!] Issue when git cloning'${RESET} &>/dev/null
 chown -R ctfd. /var/log/CTFd /home/ctfd/CTFd
-pushd /home/ctfd/CTFd >/dev/null
+pushd /home/ctfd/CTFd &>/dev/null
 git pull -q
-pip3 -q install -r requirements.txt 1>&2
+pip3 -q install -r requirements.txt &> /dev/null
 
 cat >> /etc/systemd/system/ctfd.service << EOF
 [Unit]
@@ -157,14 +159,13 @@ PrivateTmp = true
 WantedBy = multi-user.target
 EOF
 
-systemctl daemon-reload 1>&2
-systemctl enable ctfd 1>&2
-systemctl start ctfd 1>&2
-systemctl start ctfd 1>&2
+systemctl daemon-reload &> /dev/null
+systemctl enable ctfd &> /dev/null
+systemctl start ctfd &> /dev/null
 
 ##### Configuring nginx
 (( STAGE++ )); echo -e "\n\n ${GREEN}[+]${RESET} (${STAGE}/${TOTAL}) Configuring ${GREEN}nginx${RESET}"
-systemctl stop nginx 1>&2
+systemctl stop nginx &> /dev/null
 cat >> /etc/nginx/sites-available/$HOSTNAME << EOF
 server {
         listen 443 ssl;
@@ -180,7 +181,28 @@ server {
 }
 EOF
 
-certbot certonly --standalone -n -d $HOSTNAME -m webmaster@$HOSTNAME --agree-tos 1>&2
-ln -s /etc/nginx/sites-available/$HOSTNAME /etc/nginx/sites-enabled/ 1>&2
-systemctl enable nginx 1>&2
-systemctl start nginx 1>&2
+certbot certonly --standalone -n -d $HOSTNAME -m webmaster@$HOSTNAME --agree-tos &> /dev/null
+ln -s /etc/nginx/sites-available/$HOSTNAME /etc/nginx/sites-enabled/ &> /dev/null
+systemctl enable nginx &> /dev/null
+systemctl start nginx &> /dev/null
+
+
+##### CLEANUP #####
+##### Clean the system
+(( STAGE++ )); echo -e "\n\n ${GREEN}[+]${RESET} (${STAGE}/${TOTAL}) ${GREEN}Cleaning${RESET} the system"
+#--- Clean package manager
+for FILE in clean autoremove; do apt-get -y -qq "${FILE}"; done
+apt-get -y -qq purge $(dpkg -l | tail -n +6 | egrep -v '^(h|i)i' | awk '{print $2}')   # Purged packages
+#--- Reset folder location
+cd ~/ &>/dev/null
+#--- Remove any history files (as they could contain sensitive info)
+history -c 2>/dev/null
+for i in $(cut -d: -f6 /etc/passwd | sort -u); do
+[ -e "${i}" ] && find "${i}" -type f -name '.*_history' -delete
+done
+
+##### Time taken
+FINISHTIME=$(date +%s)
+echo -e "\n\n ${YELLOW}[i]${RESET} Time (roughly) taken: ${YELLOW}$(( $(( FINISHTIME - STARTTIME )) / 60 )) minutes${RESET}"
+
+echo -e "\n\n ${YELLOW}[i]${RESET} Please reboot the system now to ensure all changes are taken. ${YELLOW}${RESET}"
